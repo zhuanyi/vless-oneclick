@@ -14,6 +14,10 @@
 #                   www.microsoft.com)
 #   VLESS_HOST      server address put in the share link (default: detected)
 #   VLESS_NAME      profile name shown in clients (default: host name)
+#   VLESS_IP_PREF   how Xray connects to sites that have both IPv4 and IPv6:
+#                   ipv4 (default: IPv4 first, IPv6 as fallback), ipv6
+#                   (the other way round) or auto (whatever the server's
+#                   network prefers)
 #   VLESS_BBR=0     don't enable TCP BBR congestion control
 #   XRAY_VERSION    Xray release to install, e.g. v26.3.27 (default: latest)
 #   XRAY_ZIP        install from this local Xray-linux-*.zip instead of
@@ -34,6 +38,7 @@ BBR_MODULE=/etc/modules-load.d/vless-oneclick-bbr.conf
 RELEASES=https://github.com/XTLS/Xray-core/releases
 
 DEFAULT_PORT=443
+OLD_FREEDOM='{ "tag": "direct", "protocol": "freedom" }'
 DEFAULT_SNI=www.microsoft.com
 
 say() { printf '%s\n' "$*"; }
@@ -131,6 +136,40 @@ install_xray() {
 }
 
 # --- configuration ------------------------------------------------------------
+
+# the "freedom" (direct) outbound for the chosen VLESS_IP_PREF
+freedom_outbound() {
+    local strategy
+    case "${VLESS_IP_PREF:-ipv4}" in
+        ipv4) strategy=UseIPv4v6 ;;
+        ipv6) strategy=UseIPv6v4 ;;
+        auto) printf '%s' "$OLD_FREEDOM"; return ;;
+        *) die "VLESS_IP_PREF must be ipv4, ipv6 or auto" ;;
+    esac
+    printf '{ "tag": "direct", "protocol": "freedom", "settings": { "domainStrategy": "%s" } }' "$strategy"
+}
+
+# configs made by earlier versions connect out "AsIs"; apply VLESS_IP_PREF
+upgrade_config() {
+    local new backup
+    new=$(freedom_outbound)
+    [ "$new" != "$OLD_FREEDOM" ] || return 0
+    grep -qF "$OLD_FREEDOM" "$CONFIG" || return 0
+    step "making Xray prefer ${VLESS_IP_PREF:-ipv4} for outgoing connections"
+    backup="$CONFIG.bak-$(date +%Y%m%d%H%M%S)"
+    cp -p "$CONFIG" "$backup"
+    awk -v old="$OLD_FREEDOM" -v new="$new" '{
+        i = index($0, old)
+        if (i) $0 = substr($0, 1, i - 1) new substr($0, i + length(old))
+        print }' "$backup" > "$CONF_DIR/config.new.json"
+    if "$BIN" run -test -config "$CONF_DIR/config.new.json" >/dev/null; then
+        cat "$CONF_DIR/config.new.json" > "$CONFIG"
+        say "    previous version saved as $backup"
+    else
+        say "    warning: Xray rejected the change; kept the old configuration"
+    fi
+    rm -f "$CONF_DIR/config.new.json"
+}
 
 load_info() {
     # shellcheck disable=SC1090
@@ -272,7 +311,7 @@ write_config() {
     }
   ],
   "outbounds": [
-    { "tag": "direct", "protocol": "freedom" },
+    $(freedom_outbound),
     { "tag": "block", "protocol": "blackhole" }
   ],
   "routing": {
@@ -435,6 +474,10 @@ open_firewall() {
 
 cmd_install() {
     need_root
+    case "${VLESS_IP_PREF:-ipv4}" in
+        ipv4 | ipv6 | auto) ;;
+        *) die "VLESS_IP_PREF must be ipv4, ipv6 or auto" ;;
+    esac
     command -v apt-get >/dev/null 2>&1 ||
         die "this script supports Debian / Ubuntu only"
     command -v systemctl >/dev/null 2>&1 || die "systemd is required"
@@ -444,6 +487,7 @@ cmd_install() {
     if [ -f "$INFO" ] && [ -f "$CONFIG" ]; then
         step "keeping the existing configuration"
         load_info
+        upgrade_config
     else
         if [ -f "$CONFIG" ]; then
             say "An Xray configuration that wasn't made by this script exists:"

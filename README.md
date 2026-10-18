@@ -103,6 +103,7 @@ Set these before running the script, e.g.
 | `VLESS_SNI` | website to look like (default www.microsoft.com) |
 | `VLESS_HOST` | server address in the share link (default: detected) |
 | `VLESS_NAME` | profile name in the apps |
+| `VLESS_IP_PREF` | `ipv4` (default), `ipv6` or `auto`, see [IPv4 or IPv6](#ipv4-or-ipv6) |
 | `VLESS_BBR=0` | don't enable TCP BBR |
 | `XRAY_VERSION` | Xray release to install, e.g. `v26.3.27` (default: latest) |
 | `XRAY_ZIP` | install from a local `Xray-linux-*.zip` instead of downloading |
@@ -114,6 +115,20 @@ If GitHub downloads are slow or unavailable from the server, download the
 right `Xray-linux-*.zip` (`64` for x86-64, `arm64-v8a` for ARM) from the
 [Xray releases](https://github.com/XTLS/Xray-core/releases) elsewhere, copy
 it to the server and run `sudo XRAY_ZIP=./Xray-linux-64.zip ./install.sh`.
+
+## IPv4 or IPv6
+
+On a server with both IPv4 and IPv6, Xray connects to websites over IPv4
+when they have it and falls back to IPv6 otherwise, so sites see your
+server's IPv4 address. To change that, re-run the installer with
+`sudo VLESS_IP_PREF=ipv6 ./install.sh` (IPv6 first) or `VLESS_IP_PREF=auto`
+(whatever the server's network prefers, often IPv6), or set `domainStrategy`
+of the `direct` outbound in `config.json` (`UseIPv4v6`, `UseIPv6v4`, or
+remove it) and run `systemctl restart xray`.
+
+Installs made before this option existed connect "auto"; running
+`sudo ./install.sh` again switches them to IPv4 first, keeping everything
+else (and the share link) the same.
 
 ## Files
 
